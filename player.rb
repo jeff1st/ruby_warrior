@@ -2,9 +2,18 @@ class RubyWarrior::Turn
   @@busy ||= false
   @@recov ||= false
   @@path_back = Array.new
+  @@count ||= 0
+
+  def count
+    @@count
+  end
+
+  def count=(val)
+    @@count += val
+  end
 
   def is_busy?
-   @@busy
+    @@busy
   end
 
   def is_busy=(val)
@@ -40,7 +49,6 @@ end
 class Player
   def play_turn(warrior)
     @monsters = {'Sludge' => 12, 'Thick Sludge' => 24}
-    @dangerous = {'Thick Sludge' => 24}
     @warrior_detects = Hash.new
     @directions = [:forward, :backward, :right, :left]
     @contraries = {:forward => :backward, :backward => :forward, :left => :right, :right => :left}
@@ -50,7 +58,11 @@ class Player
 
     #IA
     
-    if zone_safe? && !warrior.is_combat_recov? && !warrior.is_busy?         #Place is safe
+    if zone_safe? && !warrior.is_combat_recov? && !warrior.is_busy? && is_captive?
+      captive_to_save = find_captive                                        #Look for a captive
+      warrior.rescue!(captive_to_save)                                      #Free the captive
+      
+    elsif zone_safe? && !warrior.is_combat_recov? && !warrior.is_busy?      #Place is safe
       if warrior.is_healthy?                                                #Check if warrior is in good cond to travel
         if path_blocked?                                                    #Something is in the way
           from_blocked_zone = to_stairs
@@ -62,9 +74,9 @@ class Player
       else
         warrior.rest!                                                       #If not in good condition => rest
       end
-
+      
     elsif zone_safe? && warrior.is_combat_recov?                            #Place is safe and combat is running
-      if warrior.is_healthy?                                                #Check if warrior is in good cond to travel
+      if warrior.is_healthy?                                                #Check if warrior is in good cond to go back to fight
         go_back_to_fight(warrior)                                           #Health = ok and going back to fight
       else
         warrior.rest!                                                       #Rest until combat capable
@@ -74,16 +86,36 @@ class Player
         to_rest = to_stairs
         alternative_way = degaging(to_rest)                                 #Find a quiet place to rest
         warrior.walk!(escaping_to_rest)
-
+        
     else                                                                    #Place is not safe
       if warrior.is_busy? && zone_safe?                                     #Combat is over
         warrior.is_busy= false                                              #Enter quiet mod
         puts "Warrior is hanging around now"
         warrior.rest!
-
+      
+        
       elsif monsters_around?                                                #More than 1 monster around
-        puts "Monsters have been seen"
-
+        warrior.is_busy= true                                               #Enter combat mod
+          
+        if warrior.count == 0
+          monster_to_freeze = find_monster_to_freeze
+          puts monster_to_freeze
+          warrior.bind!(monster_to_freeze)                                  #Freeze one monster on one side
+          warrior.count= 1
+        else
+          if warrior.is_busy? && !move_possible?                            #If warrior is forced to figth
+            monster_to_attack_first = find_monster_to_attack
+            warrior.attack!(monster_to_attack_first)                        #Attack on the other side
+          elsif warrior.is_busy? && warrior.health < 8 && move_possible?    #Enter recovery mod as possible (limit can be modified)
+            warrior.is_combat_recov= true                                   
+            escape_direction = escape(warrior)
+            warrior.walk!(escape_direction)                                 #Trying to escape
+          else
+            monster_to_attack_first = find_monster_to_attack                #Keep figthing
+            warrior.attack!(monster_to_attack_first)
+          end
+        end
+        
       elsif monster_around?                               #Only one monster around
         in_monster_direction = find_monster
         if warrior.is_busy?                               #Combat has started
@@ -94,7 +126,7 @@ class Player
             escape_direction = escape(warrior)
             warrior.walk!(escape_direction)               #Escaping to rest
           end
-
+          
         else                                              #Opportunity for a new combat
           if warrior.is_healthy?
             warrior.is_busy= true                         #Enter combat mod
@@ -105,7 +137,7 @@ class Player
             warrior.walk!(escape_direction)               #Escaping to rest
           end
         end
-
+         
       else                                                #Must be blocked by something
         from_blocked_zone = to_stairs
         alternative_way = degaging(from_blocked_zone)     #Find a new way
@@ -133,15 +165,40 @@ class Player
     count.length > 1
   end
 
+  def is_captive?
+    count = @warrior_detects.values.select { |captive| captive == "Captive" }
+    count.length >= 1
+  end
+
   def find_monster
     monster_position = String.new
     @warrior_detects.each { |position, monster| monster_position = position if @monsters.include?(monster) }
     return monster_position
   end
 
+  def find_monster_to_freeze
+    monsters_position = @warrior_detects.keys.select { |position| @monsters.include?(@warrior_detects[position]) }
+    return monsters_position[0]
+  end
+ 
+  def find_monster_to_attack
+    monsters_position = @warrior_detects.keys.select { |position| @monsters.include?(@warrior_detects[position]) }
+    return monsters_position[-1]
+  end
+
+  def find_captive
+    captive_position = @warrior_detects.keys.select { |position| position if @warrior_detects[position] == "Captive" }
+    return captive_position[0]
+  end
+
   def path_blocked?
     count = @warrior_detects.values.select { |look| look == "nothing" }
     count.length == 1
+  end
+
+  def move_possible?
+    count = @warrior_detects.values.select { |look| look == "nothing" }
+    count.length >= 1
   end
 
   def degaging(from_direction)
